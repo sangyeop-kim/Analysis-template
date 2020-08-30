@@ -1,0 +1,38 @@
+auto_lr_find: false
+batch_size: 256
+early_stopping: true
+folder: best_model
+gamma: 0.9
+gpus:
+- 0
+lr: 0.007
+max_epochs: 10
+n_cv: null
+now: '200831_00:49:55'
+num_workers: 16
+patience: 5
+save_top_k: 3
+step_size: 3
+test_batch_size: -1
+training_loss:
+  'epoch : 0': 2.185155153274536
+  'epoch : 1': 2.0758323669433594
+  'epoch : 2': 2.0401575565338135
+  'epoch : 3': 2.0263824462890625
+  'epoch : 4': 2.012559413909912
+  'epoch : 5': 2.0021541118621826
+  'epoch : 6': 1.9903311729431152
+  'epoch : 7': 1.9820525646209717
+  'epoch : 8': 1.981802225112915
+  'epoch : 9': 1.9688270092010498
+validation_loss:
+  'epoch : 0': 2.108229160308838
+  'epoch : 1': 2.0684311389923096
+  'epoch : 2': 2.090487003326416
+  'epoch : 3': 2.0437703132629395
+  'epoch : 4': 2.026007890701294
+  'epoch : 5': 2.007913589477539
+  'epoch : 6': 2.0090739727020264
+  'epoch : 7': 2.001706123352051
+  'epoch : 8': 2.023566722869873
+  'epoch : 9': 2.0042924880981445

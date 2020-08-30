@@ -1,0 +1,18 @@
+auto_lr_find: false
+batch_size: 256
+early_stopping: true
+folder: best_model
+gamma: 0.9
+gpus:
+- 0
+lr: 0.007
+max_epochs: 10
+n_cv: null
+now: '200831_00:49:55'
+num_workers: 16
+patience: 5
+save_top_k: 3
+step_size: 3
+test_batch_size: -1
+training_loss: {}
+validation_loss: {}
