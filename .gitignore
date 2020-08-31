@@ -1,3 +1,5 @@
 data
 connect_info.json
 best_model
+.ipynb_checkpoints
+__pycache__
