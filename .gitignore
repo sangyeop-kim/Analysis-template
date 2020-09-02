@@ -3,3 +3,4 @@ connect_info.json
 best_model
 .ipynb_checkpoints
 __pycache__
+cifar10_data

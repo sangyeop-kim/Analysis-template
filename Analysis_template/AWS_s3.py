@@ -4,10 +4,12 @@ from io import StringIO
 import gzip
 import getpass
 import json
-
+import os
+from zipfile import ZipFile
 
 class AWS_s3 :
-    def __init__(self,region = 'ap-northeast-2', save_json = False) :
+    def __init__(self, region = 'ap-northeast-2', save_json = False) :
+        
         try :
             with open("connect_info.json", "r") as json_file:
                 key_info = json.load(json_file)
@@ -40,7 +42,9 @@ class AWS_s3 :
 
                 finally :
                     print(name)
-                    
+        
+
+
     def access(self, aws_access_key_id, aws_secret_access_key, region) :
         session = boto3.Session(aws_access_key_id=aws_access_key_id, 
                           aws_secret_access_key=aws_secret_access_key,
@@ -88,18 +92,41 @@ class AWS_s3 :
                 print('    ' * (length -1) + '├── ', end = '')
                 print(f)
     
-    def load_data(self, name) :
+    def load_data(self, key, delete_zipfile = True) :
         '''
         example
         name : 'product-report/200310_product report_DB.csv'
         '''
-        obj = self.bucket.Object(key = name)
+
+        file_name = key.split('/')[-1]
+        obj = self.bucket.Object(key = key)
         
         response = obj.get()
 
         lines = response['Body'].read()
-
-        data = gzip.decompress(lines)
-        df = pd.read_csv(StringIO(data.decode('utf-8')))
         
-        return df
+        df_extension = ['csv']
+        zip_extension = ['zip']
+
+        if file_name.split('.')[-1] in df_extension :
+            data = gzip.decompress(lines)
+            df = pd.read_csv(StringIO(data.decode('utf-8')))
+
+            return df
+
+        elif file_name.split('.')[-1] in zip_extension :
+            with open(file_name, 'wb') as zip_file :
+                zip_file.write(lines)
+
+            try :
+                with ZipFile(file_name, 'r') as zipObj:
+                    zipObj.extractall()
+            except :
+                raise Exception('압축을 풀지 못했습니다.')
+            
+            if delete_zipfile :
+                os.remove(file_name)
+
+            print('데이터를 불러왔습니다.')
+        
+        
