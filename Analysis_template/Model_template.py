@@ -1,10 +1,12 @@
 import os
+import pickle
 import warnings
 import numpy as np
 import pandas as pd
 from glob import glob
 from time import sleep
 from datetime import datetime
+from matplotlib import pyplot as plt
 warnings.filterwarnings(action = 'ignore')
 
 import json
@@ -13,6 +15,8 @@ from easydict import EasyDict
 from nbconvert import HTMLExporter
 from IPython.display import Javascript
 from sklearn.model_selection import KFold
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
 import torch
 from torch import nn, optim
@@ -132,6 +136,10 @@ class Model_template(pl.LightningModule):
         self.hparams.early_stopping = hyperparameters['early_stopping']
         self.hparams.now = 'Not_trained'
 
+        # 새로운 hyperparameter 추가
+        for kv in [[key, value] for key, value in self.init_hyperparameters.items() if key not in self.hparams.keys()]:
+            self.hparams[kv[0]] = kv[1]
+
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -151,7 +159,8 @@ class Model_template(pl.LightningModule):
             except :
                 continue
 
-        self.hparams.training_loss['epoch : %s' % self.current_epoch] = outputs[list(outputs.keys())[-1]].item()
+        self.hparams.training_loss['epoch : %s' % self.current_epoch] = \
+            outputs[list(outputs.keys())[-1]].item()
         
         train_loss = self.hparams.training_loss['epoch : %s' % self.current_epoch]
         validation_loss = self.hparams.validation_loss['epoch : %s' % self.current_epoch]
@@ -178,7 +187,8 @@ class Model_template(pl.LightningModule):
 
     
     def validation_epoch_end(self, val_outputs):
-        self.hparams.validation_loss['epoch : %s' % self.current_epoch] = float(np.mean([i['val_loss'].item() for i in val_outputs]))
+        self.hparams.validation_loss['epoch : %s' % self.current_epoch] = \
+            float(np.mean([i['val_loss'].item() for i in val_outputs]))
 
         loss = torch.tensor(np.mean([i['val_loss'].item() for i in val_outputs]))
         result = pl.EvalResult(checkpoint_on=loss)
@@ -186,30 +196,93 @@ class Model_template(pl.LightningModule):
         
         return result
     
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x) 
+        loss = self.test_loss(y_hat, y) * len(batch)
+        return {'loss' : loss, 'len' : len(batch)}
+        
     
-    def fit(self, train_data, test_data, check_time = True, num = None) :
-        train_dataloader = self.__make_dataloader(train_data, self.hparams.batch_size, True)
+    def test_epoch_end(self, outputs) :
+        sum_loss = 0
+        sum_len = 0
+        
+        for i in outputs :
+            sum_loss += i['loss']
+            sum_len += i['len']
+            
+        return {self.test_metric : sum_loss/sum_len}
+
+
+    def fit(self, train_data, test_data, check_time=True, num=None, train_shuffle=True, scaler=None,
+             oversampling=None, random_state=0) :
+        
+        self = self.train()
+        
+        if oversampling is not None:
+            
+            if type(oversampling) == float:
+                train_data = self.resample_data_binary(train_data, oversampling, random_state)
+                
+            else:
+                raise Exception('oversampling ratio should be float')
+        
+        train_data = self.train_data_change(train_data) 
+        test_data = self.test_data_change(test_data)
+        
+        
+        if scaler =='time-series':
+            train_data = list(map(lambda x : (self.__timeseries_normalize(x[0]), x[1]), train_data))
+            test_data = list(map(lambda x : (self.__timeseries_normalize(x[0]), x[1]), test_data))
+
+        else:
+            if scaler == 'standard':
+                scaler = StandardScaler()
+            elif scaler == 'minmax':
+                scaler = MinMaxScaler()
+            else:
+                scaler = None
+            
+            if scaler is not None:
+                scaler.fit(train_data)
+                train_data = scaler.transform(train_data)
+                test_data = scaler.transform(test_data)
+
+        
+        
+        train_dataloader = self.__make_dataloader(train_data, self.hparams.batch_size, train_shuffle)
         test_dataloader = self.__make_dataloader(test_data, self.hparams.test_batch_size, False)
 
-        if check_time :
+        if check_time:
             self.hparams.now = datetime.now().strftime("%y%m%d_%H:%M:%S")
         
         checkpoint_callback, tb_logger = self.__call_logger(num)
         stop = False
         
-        self.early_stop_callback = pl.callbacks.EarlyStopping(min_delta=0.00,
-                                                              patience=self.hparams.patience,
-                                                              verbose=True)
-        if self.hparams.early_stopping :
+        self.early_stop_callback = pl.callbacks.EarlyStopping(min_delta=0.00, patience=self.hparams.patience, verbose=True)
+        if self.hparams.early_stopping:
             stop = self.early_stop_callback
         
-        self.trainer = pl.Trainer(max_epochs=self.hparams.max_epochs, gpus = self.hparams.gpus, 
-                                  auto_lr_find=self.hparams.auto_lr_find, logger = tb_logger,
-                             checkpoint_callback=checkpoint_callback, early_stop_callback=stop)
+        self.trainer = pl.Trainer(max_epochs=self.hparams.max_epochs, gpus=self.hparams.gpus, auto_lr_find=self.hparams.auto_lr_find,
+                                  logger = tb_logger, checkpoint_callback=checkpoint_callback, early_stop_callback=stop)
         
         self.__save_notebook()
         sleep(1.0)
 
+        name = 'scaler'
+        
+        if scaler == 'time-series':
+            name = 'time-series'
+
+        if num is None:
+            path = "./%s/%s/%s.pkl" % (self.hparams.folder, self.hparams.now, name)
+        else:
+            path = "./%s/%s/%s_fold/%s.pkl" % (self.hparams.folder, self.hparams.now, num, name)
+        
+        if scaler is not None:                                                    
+            with open(path, "wb") as pkl_file:
+                pickle.dump(scaler, pkl_file)
 
         current_file = self.__get_notebook_name()
         sleep(0.5)
@@ -217,36 +290,69 @@ class Model_template(pl.LightningModule):
         self.trainer.fit(self, train_dataloader, test_dataloader)        
         
         
-    def __get_notebook_name(self) :
-        # display(Javascript('Jupyter.notebook.kernel.execute(\
-        #                    "this_notebook = " + "\'"\
-        #                    +Jupyter.notebook.notebook_name+"\'");'))
-        time = [os.path.getmtime(i) for i in glob('*.ipynb')]
-        return glob('*.ipynb')[np.where(np.max(time) == time)[0][0]]
-
-
-    def __save_notebook(self):
-        display(
-            Javascript("IPython.notebook.save_notebook()"),
-            include=['application/javascript']
-        )
-
-    def __output_HTML(self, current_file, path):
-        import codecs
-        import nbformat
-        exporter = HTMLExporter()
+    def fit_cross_validation(self, data, n_splits, random_state, train_shuffle = True, scaler = None,
+                             oversampling=None) :
+             
+        check_time = True
+        n_cv = KFold(n_splits=n_splits, random_state=random_state)
         
-        output_notebook = nbformat.read(current_file, as_version=4)
-        output, resources = exporter.from_notebook_node(output_notebook)
-        codecs.open(path +'saved_ipynb_file.html', 'w', encoding='utf-8').write(output)
         
-    def test(self, data, metric_name, loss = None) :
+        
+        for num, (train, test) in enumerate(n_cv.split(data)) :
+            num += 1
+            
+            split_index = {'train' : train.tolist(), 'test' : test.tolist()}
+            
+            try :
+                train_set = data[train]
+                test_set = data[test]
+
+            except :
+                train_set = [data[i] for i in train]
+                test_set = [data[i] for i in test]
+
+                self.__init__(self.init_hyperparameters)
+                if not check_time :
+                    self.hparams.now = now
+
+                self.fit(train_set, test_set, check_time, num, train_shuffle, scaler, oversampling, random_state)
+                
+                with open("./%s/%s/%s_fold/train_test_split_index.json" % (self.hparams.folder,
+                                                                     self.hparams.now, num), "w") as json_file:
+                    json.dump(split_index, json_file)
+                
+                if check_time :
+                    now = self.hparams.now
+
+                check_time = False
+
+
+
+    def test(self, data, metric_name, loss = None, fold = None) :
+        scaler = None
+        self = self.eval()
+        if fold is None:
+            scaler_pkl = glob('%s/%s/*.pkl'% (self.hparams.folder, self.hparams.now))
+
+        else:
+            scaler_pkl = glob('%s/%sfold/*.pkl'% (self.hparams.folder, fold))
+        
+
+        if len(scaler_pkl) > 0:
+            if 'time-series' in scaler_pkl[0]:
+                data = list(map(lambda x : (self.__timeseries_normalize(x[0]), x[1]), data))
+            else:
+                with open(scaler_pkl[0], 'rb') as pkl_file:
+                    scaler = pickle.load(pkl_file) 
+                    
+                data = scaler.transform(data)
 
         dataloader = self.__make_dataloader(data, self.hparams.test_batch_size, False)
+
         checkpoint_callback, tb_logger = self.__call_logger()
 
         trainer = pl.Trainer(max_epochs=self.hparams.max_epochs, gpus = self.hparams.gpus, 
-                                  auto_lr_find=False, 
+                                  auto_lr_find=False,
                              checkpoint_callback=checkpoint_callback, logger = tb_logger)
         
         if loss is not None :
@@ -279,33 +385,71 @@ class Model_template(pl.LightningModule):
             json_path = "%s/%sfold/train_test_split_index.json" % (self.hparams.folder,
                                                                    ckpt.split('fold')[0])
             with open(json_path, "r") as json_file:
-                test_index = json.load(json_file)['test']                
+                test_index = json.load(json_file)['test']    
+
+
             try :
                 test_set = data[test_index]
 
             except :
                 test_set = [data[i] for i in test_index]
 
-            self.test(test_set, metric_name, loss)
+            self.test(test_set, metric_name, loss, ckpt.split('fold')[0])
+
+
+    def load_model(self, ckpt_path) :
+        ckpt_path = self.__best_model_find_algorithm(ckpt_path)
         
-                
+        if len(ckpt_path) > 1 :
+            raise Exception('n_fold를 포함한 데이터를 load 하였습니다. \
+            test_cross_validation()을 이용하세요.')
+        else : 
+            ckpt_path = ckpt_path[0]
+           
+        loaded_model = self.load_from_checkpoint('./%s/%s.ckpt' % (self.hparams.folder, 
+                                                                   ckpt_path), 
+                                         hparams_file = './%s/%s/hparams.yaml' % \
+                                           (self.hparams.folder, 
+                                            ('/').join(ckpt_path.split('/')[:-1])))
+        print('succefully load : %s' % ckpt_path)
+        
+        loaded_model.hparams.now = ckpt_path.split('/')[0]
+        return loaded_model
+
+
+    def __make_dataloader(self, data, batch_size, is_train) :
+        if batch_size == -1 :
+            batch_size = len(data)
     
-    def test_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x) 
-        loss = self.test_loss(y_hat, y) * len(batch)
-        return {'loss' : loss, 'len' : len(batch)}
+        return DataLoader(data, batch_size=batch_size, shuffle = is_train, 
+                          num_workers=self.hparams.num_workers)
+
+
+    def __timeseries_normalize(self, data):
+        # (시간, 변수)
+        return ((data) - np.mean(data, axis = 0))/ np.std(data, axis = 0)
+
+    def __get_notebook_name(self) :
+
+        time = [os.path.getmtime(i) for i in glob('*.ipynb')]
+        return glob('*.ipynb')[np.where(np.max(time) == time)[0][0]]
+
+
+    def __save_notebook(self):
+        display(
+            Javascript("IPython.notebook.save_notebook()"),
+            include=['application/javascript']
+        )
+
+    def __output_HTML(self, current_file, path):
+        import codecs
+        import nbformat
+        exporter = HTMLExporter()
         
+        output_notebook = nbformat.read(current_file, as_version=4)
+        output, resources = exporter.from_notebook_node(output_notebook)
+        codecs.open(path +'saved_ipynb_file.html', 'w', encoding='utf-8').write(output)    
     
-    def test_epoch_end(self, outputs) :
-        sum_loss = 0
-        sum_len = 0
-        
-        for i in outputs :
-            sum_loss += i['loss']
-            sum_len += i['len']
-            
-        return {self.test_metric : sum_loss/sum_len}
     
     def __call_logger(self, num = None) :
         filepath=os.getcwd() + '/%s/%s/{epoch:d}_{val_loss:.4f}' % (self.hparams.folder, 
@@ -351,69 +495,32 @@ class Model_template(pl.LightningModule):
                 best_model_list.append(file)
                 
             return best_model_list
-        
-        
-    def load_model(self, ckpt_path) :
-        ckpt_path = self.__best_model_find_algorithm(ckpt_path)
-        
-        if len(ckpt_path) > 1 :
-            raise Exception('n_fold를 포함한 데이터를 load 하였습니다. \
-            test_cross_validation()을 이용하세요.')
-        else : 
-            ckpt_path = ckpt_path[0]
-           
-        loaded_model = self.load_from_checkpoint('./%s/%s.ckpt' % (self.hparams.folder, 
-                                                                   ckpt_path), 
-                                         hparams_file = './%s/%s/hparams.yaml' % \
-                                           (self.hparams.folder, 
-                                            ('/').join(ckpt_path.split('/')[:-1])))
-        print('succefully load : %s' % ckpt_path)
-        
-        loaded_model.hparams.now = ckpt_path.split('/')[0]
-        return loaded_model
 
+    def resample_data_binary(self, dataset, pos_ratio=0.2, random_state=0):
+        # i : 길이
+        y = list(map(lambda x : x[1], dataset))
+        
+        # pos_idx : 아웃라이어
+        pos_idx = np.where(np.array(y)==1)[0]
+        neg_idx = np.where(np.array(y)==0)[0]
+        
+        # 정상 * (정상:비정상 비)
+        n_new_pos = int(len(neg_idx) * pos_ratio / (1 - pos_ratio))
+        
+        np.random.seed(random_state)
+        
+        # 오버샘플링
+        new_pos_idx = np.random.choice(pos_idx, n_new_pos)
+        
+        total_index = np.concatenate((new_pos_idx, neg_idx))
+        np.random.shuffle(total_index)
+        
+        dataset = [dataset[i] for i in total_index]
+        
+        return dataset
+
+    def train_data_change(self, train_data):
+        return train_data
     
-    def __make_dataloader(self, data, batch_size, is_train) :
-        if batch_size == -1 :
-            batch_size = len(data)
-    
-        return DataLoader(data, batch_size=batch_size, shuffle = is_train, 
-                          num_workers=self.hparams.num_workers) 
-    
-    def fit_cross_validation(self, data, n_splits, random_state) :
-             
-        check_time = True
-        n_cv = KFold(n_splits=n_splits, random_state=random_state)
-        
-        
-        
-        for num, (train, test) in enumerate(n_cv.split(data)) :
-            num += 1
-            
-            split_index = {'train' : train.tolist(), 'test' : test.tolist()}
-            
-            try :
-                train_set = data[train]
-                test_set = data[test]
-
-            except :
-                train_set = [data[i] for i in train]
-                test_set = [data[i] for i in test]
-
-                self.__init__(self.init_hyperparameters)
-                if not check_time :
-                    self.hparams.now = now
-
-                self.fit(train_set, test_set, check_time, num)
-                
-                with open("./%s/%s/%s_fold/train_test_split_index.json" % (self.hparams.folder,
-                                                                     self.hparams.now, num), "w") as json_file:
-                    json.dump(split_index, json_file)
-                
-                if check_time :
-                    now = self.hparams.now
-
-                check_time = False
-    ###############################################################################
-    ################################ Do not change ################################
-    ###############################################################################
+    def test_data_change(self, test_data):
+        return test_data
