@@ -1,6 +1,6 @@
 import boto3
 import pandas as pd
-from io import StringIO
+from io import StringIO, BytesIO
 import gzip
 import getpass
 import json
@@ -107,6 +107,9 @@ class AWS_s3 :
         
         df_extension = ['csv']
         zip_extension = ['zip']
+        ftr_extension = ['ftr']
+        parquet_extension = ['parquet']
+        
 
         if file_name.split('.')[-1] in df_extension :
             data = gzip.decompress(lines)
@@ -128,5 +131,13 @@ class AWS_s3 :
                 os.remove(file_name)
 
             print('데이터를 불러왔습니다.')
-        
+        elif file_name.split('.')[-1] in ftr_extension:
+            to_byte = BytesIO(lines)
+
+            return pd.read_feather(to_byte)
+
+        elif file_name.split('.')[-1] in parquet_extension:
+            to_byte = BytesIO(lines)
+
+            return pd.read_parquet(to_byte)
         
