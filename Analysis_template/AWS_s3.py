@@ -141,3 +141,7 @@ class AWS_s3 :
 
             return pd.read_parquet(to_byte)
         
+    
+    def upload_data(self, filepath, s3path):
+        self.bucket.upload_file(filepath, s3path)
+        print('complete upload!')
