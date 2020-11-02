@@ -108,6 +108,7 @@ class AWS_s3 :
         df_extension = ['csv']
         zip_extension = ['zip']
         ftr_extension = ['ftr']
+        pkl_extenstion = ['pkl']
         parquet_extension = ['parquet']
         
 
@@ -141,7 +142,16 @@ class AWS_s3 :
 
             return pd.read_parquet(to_byte)
         
+        elif file_name.split('.')[-1] in pkl_extension:
+            to_byte = BytesIO(lines)
+
+            return pd.read_pickle(to_byte, compression=None)
+        
     
     def upload_data(self, filepath, s3path):
+        '''
+        filepath : local path, './data.csv'
+        s3path : s3 path, 'PSK/Intel/total_log.parquet' (bucket name x, filename is essential)
+        '''
         self.bucket.upload_file(filepath, s3path)
         print('complete upload!')
