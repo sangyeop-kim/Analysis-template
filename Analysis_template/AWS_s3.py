@@ -108,7 +108,7 @@ class AWS_s3 :
         df_extension = ['csv']
         zip_extension = ['zip']
         ftr_extension = ['ftr']
-        pkl_extenstion = ['pkl']
+        pkl_extension = ['pkl']
         parquet_extension = ['parquet']
         
 
